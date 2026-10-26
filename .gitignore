@@ -1,0 +1,5 @@
+# Secrets and live data - never commit
+site/api/config.php
+site/api/data/*
+!site/api/data/.htaccess
+!site/api/data/index.html

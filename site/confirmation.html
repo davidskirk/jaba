@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Booking Confirmation | Landenberg Carriage House</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<nav class="nav solid"><div class="wrap"><a class="brand" href="index.html">Landenberg Carriage House</a></div></nav>
+<main class="page">
+  <div class="panel" id="out"><p class="muted">Checking your payment&hellip;</p></div>
+</main>
+<script src="assets/js/common.js"></script>
+<script src="assets/js/booking-view.js"></script>
+<script>
+(function () {
+  var ref = CH.param('ref'), t = CH.param('t');
+  var out = document.getElementById('out');
+  var tries = 0;
+  function check() {
+    CH.api('confirm.php?ref=' + encodeURIComponent(ref) + '&t=' + encodeURIComponent(t)).then(function (res) {
+      var b = res.booking;
+      if (b.status === 'confirmed') {
+        out.innerHTML = '<span class="status-pill confirmed">Confirmed</span>' +
+          '<h1 style="margin-top:12px">Thank you, ' + CH.esc(b.name.split(' ')[0]) + '!</h1>' +
+          '<p>Your stay is booked. A confirmation email is on its way to <strong>' + CH.esc(b.email) + '</strong>.</p>' +
+          BookingView.details(b) +
+          '<p><a class="btn btn-dark" href="manage.html?ref=' + encodeURIComponent(ref) + '&t=' + encodeURIComponent(t) + '">Manage booking</a> ' +
+          '<a class="btn btn-ghost" href="index.html">Back to home</a></p>' +
+          '<p class="small muted">Bookmark the "Manage booking" page &mdash; you can use it to view or cancel your booking.</p>';
+      } else if (b.status === 'pending' && ['processing', 'requires_action', 'requires_confirmation', null].indexOf(res.payment_status) >= 0 && tries++ < 10) {
+        out.innerHTML = '<p>Your payment is processing&hellip; this page will update automatically.</p>';
+        setTimeout(check, 3000);
+      } else if (b.status === 'cancelled') {
+        out.innerHTML = '<span class="status-pill cancelled">Not booked</span><h1 style="margin-top:12px">We\'re sorry</h1><p>' + CH.esc(b.cancel_reason || 'This booking was cancelled.') + '</p><p><a class="btn btn-dark" href="index.html#book">Choose new dates</a></p>';
+      } else {
+        out.innerHTML = '<span class="status-pill">Payment not completed</span><h1 style="margin-top:12px">Your booking isn\'t complete</h1>' +
+          '<p>We didn\'t receive your payment, so the dates have not been booked. No money has been taken.</p>' +
+          '<p><a class="btn btn-dark" href="index.html?checkin=' + b.checkin + '&checkout=' + b.checkout + '#book">Try again</a></p>';
+      }
+    }).catch(function (e) {
+      out.innerHTML = '<div class="msg error">' + CH.esc(e.message) + '</div>';
+    });
+  }
+  if (!ref || !t) out.innerHTML = '<div class="msg error">Missing booking reference.</div>';
+  else check();
+})();
+</script>
+</body>
+</html>

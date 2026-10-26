@@ -1,0 +1,5 @@
+# Keep configuration, shared code and data private.
+<FilesMatch "^(config\.php|config\.sample\.php|lib\.php)$">
+    Require all denied
+</FilesMatch>
+Options -Indexes
