@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Manage Booking | Landenberg Carriage House</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<nav class="nav solid"><div class="wrap"><a class="brand" href="index.html">Landenberg Carriage House</a></div></nav>
+<main class="page">
+  <div class="panel">
+    <div id="out"><p class="muted">Loading your booking&hellip;</p></div>
+    <div id="actions"></div>
+    <form id="pay-form" class="hidden">
+      <div class="step-title">Pay remaining balance</div>
+      <div id="payment-element"></div>
+      <div id="pay-msg"></div>
+      <button class="btn btn-primary btn-block" id="btn-pay">Pay</button>
+    </form>
+  </div>
+</main>
+<script src="https://js.stripe.com/v3/"></script>
+<script src="assets/js/common.js"></script>
+<script src="assets/js/booking-view.js"></script>
+<script>
+(function () {
+  var ref = CH.param('ref'), t = CH.param('t');
+  var out = document.getElementById('out'), actions = document.getElementById('actions');
+  var stripe, elements, ownerEmail;
+
+  function render(b) {
+    var label = { confirmed: 'Confirmed', cancelled: 'Cancelled', pending: 'Awaiting payment', expired: 'Not completed' }[b.status] || b.status;
+    out.innerHTML = '<span class="status-pill ' + b.status + '">' + label + '</span>' +
+      '<h1 style="margin-top:12px">Your booking</h1>' + BookingView.details(b);
+    var html = '';
+    if (b.status === 'confirmed') {
+      if (b.balance_status === 'failed') {
+        html += '<div class="msg error">We couldn\'t charge your card for the remaining balance. Please pay it below.</div>' +
+          '<button class="btn btn-primary btn-block" id="btn-start-pay">Pay ' + CH.money(b.balance_cents) + ' now</button>';
+      }
+      if (b.can_cancel_with_refund) {
+        html += '<div class="policy" style="margin-top:20px"><h3>Cancel for a full refund</h3><p>You can cancel until ' +
+          CH.fmtDate(CH.addDays(b.balance_due_date, -1)) + ' and receive a full refund of ' + CH.money(b.paid_cents) + '.</p></div>' +
+          '<button class="btn btn-ghost" id="btn-cancel">Cancel booking</button>';
+      } else if (b.status === 'confirmed') {
+        html += '<p class="small muted" style="margin-top:20px">The free cancellation period has ended. If your plans change, please ' +
+          (ownerEmail ? '<a href="mailto:' + CH.esc(ownerEmail) + '">contact us</a>' : 'contact us') + '.</p>';
+      }
+    }
+    html += '<div id="act-msg"></div>';
+    actions.innerHTML = html;
+    var c = document.getElementById('btn-cancel');
+    if (c) c.addEventListener('click', function () {
+      if (!confirm('Cancel this booking? Your payment of ' + CH.money(b.paid_cents) + ' will be refunded in full.')) return;
+      c.disabled = true; c.textContent = 'Cancelling…';
+      CH.api('manage.php', { body: { ref: ref, t: t, action: 'cancel' } }).then(function (res) {
+        render(res.booking);
+        CH.message(document.getElementById('act-msg'), 'Your booking has been cancelled and a refund issued. It usually appears within 5–10 business days.', 'ok');
+      }).catch(function (e) { c.disabled = false; c.textContent = 'Cancel booking'; CH.message(document.getElementById('act-msg'), e.message); });
+    });
+    var p = document.getElementById('btn-start-pay');
+    if (p) p.addEventListener('click', function () {
+      p.disabled = true;
+      CH.api('manage.php', { body: { ref: ref, t: t, action: 'pay_balance' } }).then(function (res) {
+        stripe = Stripe(res.publishable_key);
+        elements = stripe.elements({ clientSecret: res.client_secret, appearance: { variables: { colorPrimary: '#2f3e34', borderRadius: '10px' } } });
+        elements.create('payment').mount('#payment-element');
+        document.getElementById('btn-pay').textContent = 'Pay ' + CH.money(b.balance_cents);
+        document.getElementById('pay-form').classList.remove('hidden');
+        p.classList.add('hidden');
+      }).catch(function (e) { p.disabled = false; CH.message(document.getElementById('act-msg'), e.message); });
+    });
+  }
+
+  document.getElementById('pay-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = document.getElementById('btn-pay');
+    btn.disabled = true;
+    var returnUrl = new URL('manage.html', window.location.href);
+    returnUrl.searchParams.set('ref', ref);
+    returnUrl.searchParams.set('t', t);
+    returnUrl.searchParams.set('paid', '1');
+    stripe.confirmPayment({ elements: elements, confirmParams: { return_url: returnUrl.href } }).then(function (r) {
+      if (r.error) { CH.message(document.getElementById('pay-msg'), r.error.message); btn.disabled = false; }
+    });
+  });
+
+  function load() {
+    var url = CH.param('paid') ? 'confirm.php?kind=balance&' : 'manage.php?';
+    CH.api(url + 'ref=' + encodeURIComponent(ref) + '&t=' + encodeURIComponent(t)).then(function (res) {
+      ownerEmail = res.owner_email;
+      render(res.booking);
+    }).catch(function (e) { out.innerHTML = '<div class="msg error">' + CH.esc(e.message) + '</div>'; });
+  }
+  if (!ref || !t) out.innerHTML = '<div class="msg error">Please use the link in your confirmation email.</div>';
+  else load();
+})();
+</script>
+</body>
+</html>
