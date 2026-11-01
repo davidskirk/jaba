@@ -41,9 +41,9 @@ return [
     ],
 
     // ---- Pricing ------------------------------------------------------------
-    'rate_weekday'    => 120,   // Sun-Thu nights
-    'rate_weekend'    => 140,   // Fri & Sat nights
-    'rate_holiday'    => 140,   // US federal holidays and holiday-weekend nights
+    'rate_weekday'    => 115,   // Sun-Thu nights
+    'rate_weekend'    => 130,   // Fri & Sat nights
+    'rate_holiday'    => 130,   // US federal holidays and holiday-weekend nights
     'cleaning_fee'    => 90,    // per stay
 
     // Long-stay discounts on the nightly total (cleaning fee is not discounted).
@@ -67,6 +67,11 @@ return [
     // Federal holidays to IGNORE (by name) if you don't want them treated as holidays,
     // e.g. ['Columbus Day', 'Veterans Day'].
     'exclude_holidays' => [],
+
+    // Local event weekends, priced at rate_holiday with the holiday-weekend minimum
+    // stay. first_night / last_night are the nights (check-in dates) covered, e.g.
+    // ['name' => 'University of Delaware Homecoming', 'first_night' => '2026-11-13', 'last_night' => '2026-11-14'],
+    'event_weekends' => [],
 
     // ---- Taxes (Pennsylvania / Chester County) ------------------------------
     // PA Hotel Occupancy Tax 6% + Chester County Hotel Room Rental Tax 5%.
