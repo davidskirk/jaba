@@ -141,6 +141,18 @@ function booking_update(int $id, array $fields): void
     db()->prepare("UPDATE bookings SET $sets WHERE id = :id")->execute($fields);
 }
 
+/** Like booking_update, but only if $column still equals $from. Returns false if another request got there first. */
+function booking_update_if(int $id, string $column, string $from, array $fields): bool
+{
+    $fields['updated_at'] = date('c');
+    $sets = implode(', ', array_map(fn($k) => "$k = :$k", array_keys($fields)));
+    $fields['id'] = $id;
+    $fields['from_value'] = $from;
+    $st = db()->prepare("UPDATE bookings SET $sets WHERE id = :id AND $column = :from_value");
+    $st->execute($fields);
+    return $st->rowCount() === 1;
+}
+
 function new_ref(): string
 {
     $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -640,13 +652,18 @@ function finalize_deposit(array $b, array $pi): array
         return $b;
     }
     // If the hold expired before payment completed, make sure nobody took the dates.
+    // The confirmation page and the Stripe webhook can both arrive at once, so each
+    // status change is claimed atomically and only the winner refunds or sends emails.
     if ($b['status'] === 'expired' && check_dates_free($b['checkin'], $b['checkout'], true, (int) $b['id'])) {
-        refund_payment($pi['id'], null);
-        booking_update((int) $b['id'], [
+        $claimed = booking_update_if((int) $b['id'], 'status', 'expired', [
             'status' => 'cancelled', 'cancelled_at' => date('c'), 'deposit_pi' => $pi['id'],
             'refunded_cents' => (int) $pi['amount_received'], 'cancel_reason' => 'Dates no longer available - refunded automatically',
         ]);
         $b = booking_by_ref($b['ref']);
+        if (!$claimed) {
+            return $b;
+        }
+        refund_payment($pi['id'], null);
         send_mail($b['email'], 'Booking not completed - payment refunded', "Hi {$b['name']},\n\nSorry, the dates you chose were booked by someone else while your payment was processing. Your payment of " . money((int) $pi['amount_received']) . " has been refunded in full.\n\n" . cfg('site_name'));
         send_mail(cfg('owner_email'), "Auto-refunded {$b['ref']} (date conflict)", booking_summary_text($b));
         return $b;
@@ -659,9 +676,11 @@ function finalize_deposit(array $b, array $pi): array
         'balance_status' => (int) $b['balance_cents'] > 0 ? 'scheduled' : 'none',
         'hold_expires_at' => null,
     ];
-    booking_update((int) $b['id'], $fields);
+    $claimed = booking_update_if((int) $b['id'], 'status', $b['status'], $fields);
     $b = booking_by_ref($b['ref']);
-    send_confirmation_emails($b);
+    if ($claimed) {
+        send_confirmation_emails($b);
+    }
     return $b;
 }
 
@@ -670,8 +689,11 @@ function finalize_balance(array $b, array $pi): array
     if ($b['balance_status'] === 'paid') {
         return $b;
     }
-    booking_update((int) $b['id'], ['balance_status' => 'paid', 'balance_pi' => $pi['id'], 'balance_paid_at' => date('c')]);
+    $claimed = booking_update_if((int) $b['id'], 'balance_status', (string) $b['balance_status'], ['balance_status' => 'paid', 'balance_pi' => $pi['id'], 'balance_paid_at' => date('c')]);
     $b = booking_by_ref($b['ref']);
+    if (!$claimed) {
+        return $b;
+    }
     send_mail($b['email'], "Payment received - {$b['ref']}", "Hi {$b['name']},\n\nThank you - we've received your final payment of " . money((int) $b['balance_cents']) . ". Your stay is fully paid.\n\n" . booking_summary_text($b) . "\n\nWe look forward to welcoming you!\n" . cfg('site_name'));
     send_mail(cfg('owner_email'), "Balance paid - {$b['ref']}", booking_summary_text($b));
     return $b;
@@ -816,13 +838,79 @@ function send_mail(string $to, string $subject, string $body): void
     }
     $from = cfg('from_email');
     $name = cfg('site_name');
+    $subj = mb_encode_mimeheader($subject);
+    // Quoted-printable keeps the body 7-bit, so relays have no reason to re-encode
+    // it (which would break the DKIM signature).
+    $body = quoted_printable_encode(str_replace(["\r\n", "\n"], ["\n", "\r\n"], $body));
     $headers = [
         'From: ' . mb_encode_mimeheader($name) . " <$from>",
         'Reply-To: ' . cfg('owner_email'),
+        'MIME-Version: 1.0',
         'Content-Type: text/plain; charset=UTF-8',
+        'Content-Transfer-Encoding: quoted-printable',
     ];
-    $ok = @mail($to, mb_encode_mimeheader($subject), $body, implode("\r\n", $headers), '-f' . $from);
-    log_msg(($ok ? 'Mail sent' : 'Mail FAILED') . " to $to: $subject");
+    $sig = dkim_signature($headers, $to, $subj, $body);
+    if ($sig !== null) {
+        array_unshift($headers, $sig);
+    }
+    // Envelope sender = from_email lets SPF/DMARC pass for your domain, but only if
+    // its SPF record includes this host; the From: header above is used either way.
+    $params = (cfg('mail_set_envelope_sender') ?? true) ? '-f' . $from : '';
+    $ok = @mail($to, $subj, $body, implode("\r\n", $headers), $params);
+    log_msg(($ok ? 'Mail sent' : 'Mail FAILED') . ($sig !== null ? ' (DKIM signed)' : '') . " to $to: $subject");
+}
+
+/**
+ * DKIM-Signature header (rsa-sha256, relaxed/relaxed) for a message, or null when
+ * signing is off or the key is missing. Signs To, Subject and the given headers.
+ */
+function dkim_signature(array $headers, string $to, string $subject, string $body): ?string
+{
+    $d = cfg('dkim') ?? [];
+    if (empty($d['enabled'])) {
+        return null;
+    }
+    if (!function_exists('openssl_sign')) {
+        log_msg('DKIM: PHP openssl extension not available - sending unsigned');
+        return null;
+    }
+    $pem = @file_get_contents(DATA_DIR . '/' . ($d['private_key_file'] ?? 'dkim_private.pem'));
+    $key = $pem ? openssl_pkey_get_private($pem) : false;
+    if (!$key) {
+        log_msg('DKIM: private key missing or unreadable - sending unsigned');
+        return null;
+    }
+    $domain = ($d['domain'] ?? '') ?: substr((string) strrchr((string) cfg('from_email'), '@'), 1);
+
+    // Relaxed body: collapse spaces, strip trailing spaces and blank lines, CRLF endings.
+    $lines = array_map(fn($l) => rtrim(preg_replace('/[ \t]+/', ' ', $l), ' '), preg_split('/\r\n|\n/', $body));
+    while ($lines && end($lines) === '') {
+        array_pop($lines);
+    }
+    $canonBody = $lines ? implode("\r\n", $lines) . "\r\n" : '';
+
+    $names = [];
+    $canon = '';
+    foreach (array_merge(["To: $to", "Subject: $subject"], $headers) as $h) {
+        [$hName, $hValue] = explode(':', $h, 2);
+        $names[] = strtolower(trim($hName));
+        $canon .= dkim_relaxed_header($hName, $hValue) . "\r\n";
+    }
+    $tags = 'v=1; a=rsa-sha256; c=relaxed/relaxed; d=' . $domain . '; s=' . ($d['selector'] ?? 'lch')
+        . '; t=' . time() . '; h=' . implode(':', $names)
+        . '; bh=' . base64_encode(hash('sha256', $canonBody, true)) . '; b=';
+    $canon .= dkim_relaxed_header('DKIM-Signature', $tags);
+    if (!openssl_sign($canon, $raw, $key, OPENSSL_ALGO_SHA256)) {
+        log_msg('DKIM: signing failed - sending unsigned');
+        return null;
+    }
+    return 'DKIM-Signature: ' . $tags . base64_encode($raw);
+}
+
+function dkim_relaxed_header(string $name, string $value): string
+{
+    $value = preg_replace('/\r\n(?=[ \t])/', '', $value);
+    return strtolower(trim($name)) . ':' . trim(preg_replace('/[ \t]+/', ' ', $value));
 }
 
 function fmt_date(string $d): string

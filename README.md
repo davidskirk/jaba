@@ -114,6 +114,19 @@ This job runs once a day. It charges the balance on bookings that are 7 days out
    ```
    The admin page shows the exact path to use for your account.
 
+### Make sure emails reach guests' inboxes
+Gmail, Outlook and Yahoo refuse or spam-folder email that isn't authenticated. On GoDaddy:
+1. **SPF.** In your domain's DNS, add a TXT record with name `@`. If your email is with Google Workspace, use `v=spf1 include:_spf.google.com include:secureserver.net ~all`. Only have one SPF record; if one exists, add `include:secureserver.net` to it.
+2. **DKIM.** If cPanel has **Email → Email Deliverability**, use its DKIM record. If it doesn't (some GoDaddy plans hide it), the site can sign emails itself:
+   - Create a key pair: `openssl genrsa -out dkim_private.pem 2048` and put the file in `api/data/` (it's kept private there).
+   - Get the public key: `openssl rsa -in dkim_private.pem -pubout`. Remove the `-----BEGIN/END-----` lines and join the rest into one line.
+   - In DNS, add a TXT record named `lch._domainkey` with the value `v=DKIM1; k=rsa; p=` followed by that line.
+   - In `config.php`, set `'dkim' => ['enabled' => true, …]`.
+3. Keep `mail_set_envelope_sender` at `true` once the SPF record is in place. If you have no SPF record, set it to `false`, or Gmail will refuse the emails.
+4. **DMARC (optional but recommended).** Add a TXT record named `_dmarc` with the value `v=DMARC1; p=none; rua=mailto:YOU@yourdomain`.
+
+To check, send yourself a booking email, open it in Gmail and choose **⋮ → Show original**. SPF, DKIM and DMARC should all say PASS. A brand-new SPF record can take an hour to be picked up. Gmail may also hold the first few emails from a new sender for a while, or put them in Spam; mark them "Not spam".
+
 ### Check your setup
 Go to **https://the-kirks.com/carriagehouse/admin/** and log in. The **Setup checklist** at the bottom should show all green ticks.
 
