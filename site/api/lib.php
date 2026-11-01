@@ -285,6 +285,17 @@ function holiday_calendar(string $from, string $to): array
             $holidays[$d] = $holidays[$d] ?? 'Holiday';
         }
     }
+    // Local events (e.g. university weekends) are priced and restricted like holiday weekends.
+    foreach (cfg('event_weekends') ?: [] as $ev) {
+        $first = $ev['first_night'] ?? '';
+        $last = $ev['last_night'] ?? $first;
+        if (!valid_date($first) || !valid_date($last) || $last < $first) {
+            continue;
+        }
+        for ($d = $first; $d <= $last; $d = add_days($d, 1)) {
+            $weekendNights[$d] = $weekendNights[$d] ?? ($ev['name'] ?? 'Event') . ' weekend';
+        }
+    }
     $inRange = fn($arr) => array_filter($arr, fn($d) => $d >= $from && $d <= $to, ARRAY_FILTER_USE_KEY);
     return ['holidays' => $inRange($holidays), 'weekend_nights' => $inRange($weekendNights)];
 }

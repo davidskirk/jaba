@@ -18,9 +18,10 @@ Everything you upload is inside the [`site/`](site) folder.
 
 | Rule | Setting |
 |---|---|
-| Sun–Thu nights | $120 |
-| Fri & Sat nights | $140 |
-| US federal holidays + holiday-weekend nights | $140 |
+| Sun–Thu nights | $115 |
+| Fri & Sat nights | $130 |
+| US federal holidays + holiday-weekend nights | $130 |
+| Local event weekends (`event_weekends` in config, e.g. University of Delaware Homecoming, Commencement, move-in) | $130, with the holiday-weekend minimum stay |
 | Cleaning fee | $90 per stay |
 | Minimum stay | 2 nights, or 3 if the stay includes a holiday weekend |
 | 7+ nights | 15% off the nightly total |
