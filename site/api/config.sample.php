@@ -24,6 +24,21 @@ return [
     // (e.g. bookings@the-kirks.com) or emails may land in spam.
     'owner_email' => 'you@example.com',
     'from_email'  => 'bookings@example.com',
+    // Send with from_email as the hidden "envelope" sender too, so SPF checks your own
+    // domain and DMARC can pass. Needs an SPF record that includes your host (see
+    // README); without one, set false and mail is sent as the hosting account instead.
+    'mail_set_envelope_sender' => true,
+
+    // DKIM signing, so Gmail and others can verify the emails really come from your
+    // domain. Use this when your host can't sign mail itself (GoDaddy plans without
+    // cPanel "Email Deliverability"). The private key lives in api/data/; publish the
+    // matching public key in DNS as a TXT record named SELECTOR._domainkey - see README.
+    'dkim' => [
+        'enabled'          => false,
+        'selector'         => 'lch',
+        'domain'           => '', // blank = the domain of from_email
+        'private_key_file' => 'dkim_private.pem',
+    ],
 
     // ---- Pricing ------------------------------------------------------------
     'rate_weekday'    => 120,   // Sun-Thu nights
